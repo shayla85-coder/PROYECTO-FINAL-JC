@@ -1,9 +1,21 @@
 
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function setTheme(theme){
+ document.documentElement.dataset.theme=theme;
+ const nextTheme=theme==="dark"?"claro":"oscuro";
+ $("#th").title=`Cambiar a modo ${nextTheme}`;
+ $("#th").setAttribute("aria-label",`Cambiar a modo ${nextTheme}`);
+}
+setTheme("dark");
 const STATIC_PREVIEW=window.ZYNALIX_STATIC===true;
 async function api(url,options={}){
- const response=await fetch(url,{...options,headers:{"Content-Type":"application/json",...(options.headers||{})}});
+ let response;
+ try{
+  response=await fetch(url,{credentials:"same-origin",...options,headers:{"Content-Type":"application/json",...(options.headers||{})}});
+ }catch{
+  throw new Error("No se pudo conectar con el servidor. Verifica tu conexión e inténtalo de nuevo.");
+ }
  let result;
  try{result=await response.json()}catch{result={}}
  if(!response.ok)throw new Error(typeof result.error=="string"?result.error:"No se pudo completar la solicitud.");
@@ -32,14 +44,54 @@ async function loadServices(){
 }
 
 /* Terminal animada del hero */
-const L=["$ zynalix --diagnostico","<span class=d>Revisando disco…</span> <span class=ok>OK</span>","<span class=d>Temperatura CPU…</span> <span class=ok>OK</span>","<span class=d>Memoria RAM…</span> <span class=ok>OK</span>","<span class=d>Compilando tu idea…</span>","<span class=ok>✓ Todo listo. ¿Empezamos?</span>"];
-(async()=>{const t=$("#tm");let h="";for(const l of L){h+=l+"\n";t.innerHTML=h+"▍";await new Promise(r=>setTimeout(r,650))}})();
+const terminalLines=[
+ [{text:"$ zynalix --diagnostico"}],
+ [{text:"Revisando disco…",className:"d"},{text:" "},{text:"OK",className:"ok"}],
+ [{text:"Temperatura CPU…",className:"d"},{text:" "},{text:"OK",className:"ok"}],
+ [{text:"Memoria RAM…",className:"d"},{text:" "},{text:"OK",className:"ok"}],
+ [{text:"Compilando tu idea…"}],
+ [{text:"✓ Todo listo. ¿Empezamos?",className:"ok"}]
+];
+async function animateTerminal(){
+ const terminal=$("#tm");
+ if(!terminal)return;
+ const reducedMotion=matchMedia("(prefers-reduced-motion: reduce)").matches;
+ const cursor=document.createElement("span");
+ cursor.className="term-cursor";
+ cursor.setAttribute("aria-hidden","true");
+ cursor.textContent="▍";
+ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+ for(const segments of terminalLines){
+  const row=document.createElement("span");
+  row.className="term-line";
+  terminal.append(row);
+  row.append(cursor);
+  for(const segment of segments){
+   const output=document.createElement("span");
+   if(segment.className)output.className=segment.className;
+   output.textContent="";
+   row.insertBefore(output,cursor);
+   if(reducedMotion){
+    output.textContent=segment.text;
+    continue;
+   }
+   for(const character of Array.from(segment.text)){
+    output.textContent+=character;
+    row.append(cursor);
+    await pause(28);
+   }
+  }
+  if(!reducedMotion)await pause(320);
+ }
+}
+animateTerminal();
 
 /* Catálogo con filtros */
 function drawSvc(){
  const cats=["Todos",...new Set(S.map(x=>x.c))];
  $("#tb").innerHTML=cats.map(c=>`<button class="tab ${c==cat?"on":""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
- $("#gr").innerHTML=S.filter(x=>cat=="Todos"||x.c==cat).map((x,i)=>`<article class="card" style="animation-delay:${i*60}ms"><span class="n">0${i+1}</span><span class="t">${esc(x.c)}</span><h3>${esc(x.n)}</h3><p>${esc(x.d)}</p><div class="f"><span>${esc(x.p)}</span><button data-q="${esc(x.n)}">Cotizar →</button></div></article>`).join("");
+ $("#gr").innerHTML=S.filter(x=>cat=="Todos"||x.c==cat).map((x,i)=>`<article class="card card-delay-${Math.min(i,7)}"><span class="n">0${i+1}</span><span class="t">${esc(x.c)}</span><h3>${esc(x.n)}</h3><p>${esc(x.d)}</p><div class="f"><span>${esc(x.p)}</span><button data-q="${esc(x.n)}">Cotizar →</button></div></article>`).join("");
  $("#fs").innerHTML=S.map(x=>`<option>${esc(x.n)}</option>`).join("");drawQ();
 }
 $("#tb").onclick=e=>{if(e.target.dataset.c){cat=e.target.dataset.c;drawSvc()}};
@@ -58,13 +110,25 @@ drawSvc();
 loadServices();
 
 /* Contador, revelado al hacer scroll */
-const io=new IntersectionObserver(es=>es.forEach(e=>{e.target.classList.toggle("in",e.isIntersecting);if(!e.isIntersecting)return;
- e.target.querySelectorAll("[data-n]").forEach(b=>{if(b.dataset.counted)return;b.dataset.counted="true";const m=+b.dataset.n;let i=0;const t=setInterval(()=>{i+=Math.ceil(m/40);if(i>=m){i=m;clearInterval(t)}b.textContent=i},30)})}),{threshold:.15});
-$$(".rv").forEach(x=>io.observe(x));
+const revealTargets=$$(".rv");
+const animateCounters=target=>target.querySelectorAll("[data-n]").forEach(b=>{
+ if(b.dataset.counted)return;
+ b.dataset.counted="true";const m=+b.dataset.n;let i=0;
+ const t=setInterval(()=>{i+=Math.ceil(m/40);if(i>=m){i=m;clearInterval(t)}b.textContent=i},30);
+});
+if("IntersectionObserver" in window&&!matchMedia("(prefers-reduced-motion: reduce)").matches){
+ const io=new IntersectionObserver(entries=>entries.forEach(entry=>{
+  if(!entry.isIntersecting)return;
+  entry.target.classList.add("in");animateCounters(entry.target);io.unobserve(entry.target);
+ }),{threshold:.15,rootMargin:"0px 0px -24px 0px"});
+ revealTargets.forEach(target=>io.observe(target));
+}else{
+ revealTargets.forEach(target=>{target.classList.add("in");target.querySelectorAll("[data-n]").forEach(counter=>{counter.textContent=counter.dataset.n})});
+}
 
 /* Menú y tema */
 $("#burger").onclick=()=>$("#lk").classList.toggle("on");$("#lk").onclick=()=>$("#lk").classList.remove("on");
-$("#th").onclick=()=>{const r=document.documentElement,d=r.dataset.theme?r.dataset.theme=="dark":matchMedia("(prefers-color-scheme:dark)").matches;r.dataset.theme=d?"light":"dark"};
+$("#th").onclick=()=>setTheme(document.documentElement.dataset.theme==="dark"?"light":"dark");
 
 /* Formulario de contacto */
 function showWhatsAppMessage(container,message,label){
@@ -84,17 +148,17 @@ $("#cf2").onsubmit=async e=>{e.preventDefault();
  const button=e.target.querySelector('button[type="submit"]'),o=$("#ok");
  if(STATIC_PREVIEW){
   const message=["Hola, quiero hacer una consulta a ZYNALIX.","Nombre: "+$("#fn").value.trim(),"Correo: "+$("#fe").value.trim(),"Servicio: "+$("#fs").value,"Mensaje: "+$("#fm").value.trim()].join("\n");
-  o.classList.remove("error");o.style.display="block";
+  o.classList.remove("error");o.classList.add("is-visible");
   showWhatsAppMessage(o,message,"Continúa y envía el mensaje por WhatsApp");
   f.forEach(([s])=>$(s).classList.remove("bad"));
   return;
  }
- button.disabled=true;o.classList.remove("error");o.style.display="none";
+ button.disabled=true;button.classList.add("ld");$("#bt").textContent="Enviando…";o.classList.remove("error","is-visible");
  try{
   await api("/api/contact",{method:"POST",body:JSON.stringify({name:$("#fn").value.trim(),email:$("#fe").value.trim(),service:$("#fs").value,message:$("#fm").value.trim()})});
   e.target.reset();o.textContent="¡Gracias! Guardamos tu solicitud y el equipo se pondrá en contacto contigo.";f.forEach(([s])=>$(s).classList.remove("bad"));
  }catch(error){o.textContent=error.message;o.classList.add("error")}
- finally{button.disabled=false;o.style.display="block"}
+ finally{button.disabled=false;button.classList.remove("ld");$("#bt").textContent="Enviar mensaje";o.classList.add("is-visible")}
 };
 
 const open=(i,v)=>$(i).classList.toggle("on",v);
@@ -105,7 +169,7 @@ const legalNotices={
  privacy:{title:"Aviso de privacidad",paragraphs:[
   STATIC_PREVIEW
    ?"La vista publicada en GitHub Pages no guarda datos. Si eliges continuar por WhatsApp, el mensaje con los datos que incluiste se abrirá allí para que decidas si lo envías."
-   :"Cuando envías el formulario de contacto o una cotización, el nombre, correo, servicio y mensaje o selección se guardan en un archivo local del servidor para que ZYNALIX pueda atender la solicitud. El personal administrador autorizado puede consultar esos registros.",
+   :"Cuando envías el formulario de contacto o una cotización, el nombre, correo, servicio y mensaje o selección se guardan en la base de datos del servidor para que ZYNALIX pueda atender la solicitud. El personal administrador autorizado puede consultar esos registros.",
   "El asistente responde con opciones predefinidas en el navegador; las preguntas no se envían a Google ni se guardan.",
   "Las fuentes tipográficas se cargan desde Google Fonts y el enlace de ubicación abre Google Maps. Esos servicios externos pueden recibir datos técnicos de tu conexión cuando los visitas.",
   "Este aviso describe el comportamiento técnico actual y no reemplaza una política legal revisada para el negocio. Antes de publicar el sitio, agrega los datos de contacto del responsable del tratamiento y valida la política aplicable."
@@ -131,14 +195,14 @@ $$("[data-legal]").forEach(b=>b.onclick=()=>{
  open("#legal",true);
  $("#legal [data-x]").focus();
 });
-$("#lf").onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button[type="submit"]');button.disabled=true;$("#le").textContent="";
+$("#lf").onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button[type="submit"]');button.disabled=true;button.classList.add("ld");$("#login-label").textContent="Validando…";$("#le").textContent="";
  try{
   await api("/api/admin/login",{method:"POST",body:JSON.stringify({username:$("#lu").value,password:$("#lp").value})});
   open("#lg",false);open("#pa",true);$("#lp").value="";await drawAd();
  }catch(error){$("#le").textContent=error.message}
- finally{button.disabled=false}
+ finally{button.disabled=false;button.classList.remove("ld");$("#login-label").textContent="Entrar"}
 };
-$$("[data-p]").forEach(b=>b.onclick=()=>{$$("[data-p]").forEach(x=>x.classList.toggle("on",x==b));$("#pm").style.display=b.dataset.p=="m"?"":"none";$("#pq").style.display=b.dataset.p=="q"?"":"none";$("#ps").style.display=b.dataset.p=="s"?"":"none"});
+$$("[data-p]").forEach(b=>b.onclick=()=>{$$("[data-p]").forEach(x=>x.classList.toggle("on",x==b));$("#pm").classList.toggle("is-hidden",b.dataset.p!=="m");$("#pq").classList.toggle("is-hidden",b.dataset.p!=="q");$("#ps").classList.toggle("is-hidden",b.dataset.p!=="s")});
 async function drawAd(){
  $("#pm").innerHTML="<p>Cargando solicitudes…</p>";$("#pq").innerHTML="<p>Cargando cotizaciones…</p>";$("#pl").innerHTML="";
  try{
@@ -148,25 +212,37 @@ async function drawAd(){
   $("#pm").innerHTML=messageData.messages.length?messageData.messages.map(m=>`<div class="row"><div><b>${esc(m.name)}</b> · ${esc(m.email)}<small>${esc(m.service)} — ${new Date(m.created_at).toLocaleString("es-CO")}</small>${esc(m.message)}</div><button data-dm="${esc(m.id)}">Borrar</button></div>`).join(""):"<p>Aún no hay mensajes.</p>";
   $("#pq").innerHTML=quoteData.quotes.length?quoteData.quotes.map(q=>`<div class="row"><div><b>${esc(q.name)}</b> · ${esc(q.email)}<small>${new Date(q.created_at).toLocaleString("es-CO")} · ${q.modality==="onsite"?"En sitio":"Remoto"} · ${q.priority==="urgent"?"Urgente":"Normal"}</small>${q.items.map(i=>`${esc(i.name)} ×${esc(i.quantity)}`).join(", ")} — ${cop(Number(q.estimated_total))}${q.pending_items?` + ${esc(q.pending_items)} por cotizar`:""}</div></div>`).join(""):"<p>Aún no hay cotizaciones.</p>";
   S=serviceData.services;drawSvc();
-  $("#pl").innerHTML=S.map(s=>`<div class="row"><div><b>${esc(s.n)}</b><small>${esc(s.c)} · ${esc(s.p)}</small>${esc(s.d)}</div><button data-ds="${esc(s.id)}">Eliminar</button></div>`).join("");
+  $("#pl").innerHTML=S.map(s=>`<div class="row"><div><b>${esc(s.n)}</b><small>${esc(s.c)} · ${esc(s.p)}</small>${esc(s.d)}</div><div class="row-actions"><button type="button" data-edit="${esc(s.id)}">Editar</button><button type="button" data-ds="${esc(s.id)}">Eliminar</button></div></div>`).join("");
  }catch(error){
   $("#pm").innerHTML=`<p class="error">${esc(error.message)}</p>`;$("#pq").innerHTML="";$("#pl").innerHTML="";
  }
 }
+let editingServiceId=null;
+function resetServiceForm(){
+ editingServiceId=null;$("#sf").reset();$("#sf button[type=submit]").textContent="Añadir servicio";$("#scancel").hidden=true;
+}
 $("#pa").onclick=async e=>{const a=e.target.dataset;
  try{
+  if(a.edit){
+   const service=S.find(item=>item.id===a.edit);
+   if(!service)throw new Error("No se encontró el servicio que quieres editar.");
+   editingServiceId=service.id;$("#sn").value=service.n;$("#sc").value=service.c;$("#sp").value=service.p;$("#sd").value=service.d;
+   $("#sf button[type=submit]").textContent="Guardar cambios";$("#scancel").hidden=false;$("#sn").focus();return;
+  }
   if(a.dm)await api(`/api/admin/messages/${encodeURIComponent(a.dm)}`,{method:"DELETE"});
-  if(a.ds){await api(`/api/admin/services/${encodeURIComponent(a.ds)}`,{method:"DELETE"});await loadServices()}
-  if(a.logout!==undefined){await api("/api/admin/logout",{method:"POST"});open("#pa",false);return}
+  if(a.ds){await api(`/api/admin/services/${encodeURIComponent(a.ds)}`,{method:"DELETE"});if(editingServiceId===a.ds)resetServiceForm()}
+  if(a.logout!==undefined){await api("/api/admin/logout",{method:"POST"});open("#pa",false);resetServiceForm();return}
   if(a.dm||a.ds)await drawAd();
  }catch(error){$("#pm").insertAdjacentHTML("afterbegin",`<p class="error">${esc(error.message)}</p>`)}
 };
-$("#sf").onsubmit=async e=>{e.preventDefault();if(!$("#sn").value.trim())return;const button=e.target.querySelector('button[type="submit"]');button.disabled=true;
+$("#scancel").onclick=resetServiceForm;
+$("#sf").onsubmit=async e=>{e.preventDefault();if(!$("#sn").value.trim())return;const button=e.target.querySelector('button[type="submit"]');button.disabled=true;button.textContent="Guardando…";
  try{
-  await api("/api/admin/services",{method:"POST",body:JSON.stringify({name:$("#sn").value.trim(),category:$("#sc").value,price:$("#sp").value.trim()||"Cotización",description:$("#sd").value.trim()||"Servicio de ZYNALIX."})});
-  e.target.reset();await drawAd();
+  const service={name:$("#sn").value.trim(),category:$("#sc").value,price:$("#sp").value.trim()||"Cotización",description:$("#sd").value.trim()||"Servicio de ZYNALIX."};
+  await api(editingServiceId?`/api/admin/services/${encodeURIComponent(editingServiceId)}`:"/api/admin/services",{method:editingServiceId?"PUT":"POST",body:JSON.stringify(service)});
+  resetServiceForm();await drawAd();
  }catch(error){$("#pl").insertAdjacentHTML("afterbegin",`<p class="error">${esc(error.message)}</p>`)}
- finally{button.disabled=false}
+ finally{button.disabled=false;button.textContent=editingServiceId?"Guardar cambios":"Añadir servicio"}
 };
 
 /* Cotizador: suma servicios x cantidad, aplica modalidad y prioridad */
@@ -177,7 +253,7 @@ function calcQ(){let b=0,pend=0,det=[],items=[];
  $$("#ql input[type=checkbox]:checked").forEach(c=>{const i=c.dataset.i,q=Math.min(20,Math.max(1,+$(`.qq[data-i="${i}"]`).value||1)),v=num(S[i].p);b+=v*q;if(!v)pend++;det.push(S[i].n+" ×"+q+(v?" · "+cop(v*q):" · por cotizar"));items.push({serviceId:S[i].id,name:S[i].n,quantity:q,unitPrice:v,subtotal:v*q})});
  const t=det.length?b*(($("#qu").value==="1.2")?1.2:1)+($("#qm").value==="30000"?30000:0):0;
  $("#qd").innerHTML=det.length?det.map(x=>esc(x)).join("<br>"):"Selecciona uno o más servicios.";
- $("#qt").innerHTML=cop(t)+(pend?`<small style="font:500 .8rem Schibsted Grotesk;color:var(--mut)"> + ${pend} por cotizar</small>`:"");
+ $("#qt").innerHTML=cop(t)+(pend?`<small class="quote-pending"> + ${pend} por cotizar</small>`:"");
  return{t,det,pend,items}}
 $("#ql").oninput=e=>{if(e.target.classList.contains("qq"))e.target.closest(".qi").querySelector("[type=checkbox]").checked=true;calcQ()};
 $("#qm").onchange=$("#qu").onchange=calcQ;
@@ -188,19 +264,19 @@ $("#qb").onclick=async()=>{const r=calcQ(),n=$("#qn").value.trim(),e=$("#qe").va
  er.textContent="";
  if(STATIC_PREVIEW){
   const o=$("#qk");
-  o.classList.remove("error");o.style.display="block";
+  o.classList.remove("error");o.classList.add("is-visible");
   const services=r.items.map(item=>`${item.name} ×${item.quantity} (${item.unitPrice?cop(item.subtotal):"por cotizar"})`).join("\n");
   const message=["Hola, quiero solicitar una cotización a ZYNALIX.","Nombre: "+n,"Correo: "+e,"Servicios:\n"+services,"Modalidad: "+($("#qm").value==="30000"?"En sitio":"Remoto"),"Prioridad: "+($("#qu").value==="1.2"?"Urgente":"Normal"),"Estimado: "+cop(r.t)+(r.pend?` + ${r.pend} por cotizar`:"")].join("\n");
   showWhatsAppMessage(o,message,"Continúa y envía la cotización por WhatsApp");
   return;
  }
  if(r.items.some(item=>!item.serviceId)){er.textContent="No se pudo cargar el catálogo. Recarga la página e inténtalo de nuevo.";return}
- const button=$("#qb"),o=$("#qk");button.disabled=true;o.classList.remove("error");o.style.display="none";
+ const button=$("#qb"),o=$("#qk");button.disabled=true;button.classList.add("ld");$("#qbt").textContent="Enviando…";o.classList.remove("error","is-visible");
  try{
   const result=await api("/api/quotes",{method:"POST",body:JSON.stringify({name:n,email:e,items:r.items.map(item=>({serviceId:item.serviceId,quantity:item.quantity})),modality:$("#qm").value==="30000"?"onsite":"remote",priority:$("#qu").value==="1.2"?"urgent":"normal"})});
   o.textContent=`¡Listo! Guardamos tu solicitud de cotización. Estimado: ${cop(Number(result.estimatedTotal))}${result.pendingItems?` + ${result.pendingItems} por cotizar`:""}. Te contactaremos en menos de 24 horas.`;
  }catch(error){o.textContent=error.message;o.classList.add("error")}
- finally{button.disabled=false;o.style.display="block"}
+ finally{button.disabled=false;button.classList.remove("ld");$("#qbt").textContent="Solicitar cotización";o.classList.add("is-visible")}
 };
 
 /* Galería con visor ampliado (flechas del teclado y Escape) */
